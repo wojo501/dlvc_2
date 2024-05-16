@@ -1,11 +1,12 @@
 from abc import ABCMeta, abstractmethod
 import torch
+import numpy as np
 
 class PerformanceMeasure(metaclass=ABCMeta):
     '''
     A performance measure.
     '''
-
+    
     @abstractmethod
     def reset(self):
         '''
@@ -36,6 +37,7 @@ class SegMetrics(PerformanceMeasure):
     '''
     Mean Intersection over Union.
     '''
+    __slots__ = ["confusion_matrix","classes","miou"]
 
     def __init__(self, classes):
         self.classes = classes
@@ -47,8 +49,8 @@ class SegMetrics(PerformanceMeasure):
         Resets the internal state.
         '''
         ## TODO implement
-        pass
-
+        self.confusion_matrix = torch.zeros(len(self.classes), len(self.classes))
+        self.miou = 0
 
 
     def update(self, prediction: torch.Tensor, 
@@ -61,9 +63,25 @@ class SegMetrics(PerformanceMeasure):
         Make sure to not include pixels of value 255 in the calculation since those are to be ignored. 
         '''
 
-       ##TODO implement
-        pass
-   
+        ##TODO implement
+        if prediction.shape[0] != target.shape[0] or prediction.shape[2] != target.shape[1] or prediction.shape[3] != target.shape[2]:
+            raise ValueError("Batch size of prediction and target must match")
+        if prediction.shape[1] != len(self.classes):
+            raise ValueError("Number of classes in prediction and target must match")
+        
+        pred_labels = torch.argmax(prediction, dim=1)
+        
+        for i in range(pred_labels.shape[0]):
+            for j in range(pred_labels.shape[1]):
+                for k in range(pred_labels.shape[2]):
+                    if target[i,j,k] == 255:
+                        continue
+                    if pred_labels[i,j,k] == target[i,j,k]: # True positive or True negative
+                        self.confusion_matrix[target[i,j,k], target[i,j,k]] += 1
+                    else: # False positive or False negative
+                        self.confusion_matrix[target[i,j,k], pred_labels[i,j,k]] += 1
+        
+        self.mIoU()
 
     def __str__(self):
         '''
@@ -71,8 +89,7 @@ class SegMetrics(PerformanceMeasure):
         e.g. "mIou: 0.54"
         '''
         ##TODO implement
-        pass
-          
+        return f"mIoU: {self.miou}\n"
 
     
     def mIoU(self) -> float:
@@ -83,9 +100,71 @@ class SegMetrics(PerformanceMeasure):
         use 0 as IoU for this class.
         '''
         ##TODO implement
-        pass
+        num_classes = len(self.classes)
+        ious = np.zeros(num_classes)
+        col_sums = torch.sum(self.confusion_matrix, dim=0)
+        row_sums = torch.sum(self.confusion_matrix, dim=1)
+    
+        for i in range(num_classes):
+            denominator = col_sums[i] + row_sums[i] - self.confusion_matrix[i,i]
+            if denominator == 0:
+                ious[i] = 0
+            else:
+                ious[i] = self.confusion_matrix[i,i] / denominator
 
+        ious_clear = ious[ious != 0]
+        self.miou = np.mean(ious_clear)
 
+# TESTS
+# # params
+# batch_size = 10
+# num_classes = 3  # Example number of classes (e.g., background=0, class1=1, class2=2)
+# height, width = 4, 3  # Example image dimensions
+# classes = [0, 1, 2]
+
+# #TEST 1
+# predictions = torch.tensor(
+#     [#batch
+#         [#classes
+#     [[0.7,0.7,0.7],
+#      [0.3,0.3,0.3],
+#      [0.15,0.15,0.15],
+#      [0.15,0.15,0.15]],
+#     [[0.2,0.2,0.2],
+#      [0.6,0.6,0.6],
+#      [0.05,0.05,0.05],
+#      [0.05,0.05,0.05]],
+#     [[0.1,0.1,0.1],
+#      [0.1,0.1,0.1],
+#      [0.8,0.8,0.8],
+#      [0.8,0.8,0.8]]
+#     ]])
+
+# targets = torch.tensor([[[0, 1, 0], [2, 2, 2], [0, 0, 0], [255,255,255]]])
+
+#TEST 2
+# predictions = torch.zeros(1, 3, 5, 5)
+# targets = torch.zeros(1, 5, 5, dtype=torch.int)
+
+#TEST 3
+# # Create example predictions (logits)
+# # Shape: (batch_size, num_classes, height, width)
+# predictions = torch.randn(batch_size, num_classes, height, width)
+# # Create example targets
+# # Shape: (batch_size, height, width)
+# # Values: random integers between 0 and num_classes-1 (e.g., background=0, class1=1, class2=2)
+# targets = torch.randint(0, num_classes, (batch_size, height, width))
+# # Introduce some ignore pixels (value 255)
+# ignore_value = 255
+# targets[0, 0:10, 0:10] = ignore_value
+
+# PART TO RUN TESTS
+# print(predictions.shape)
+# print(targets.shape)
+# metrics = SegMetrics(classes=classes)
+# metrics.reset()
+# metrics.update(predictions, targets)
+# print(metrics)
 
 
 
