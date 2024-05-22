@@ -1,183 +1,108 @@
-import collections
+import argparse
+import os
 import torch
-from typing import Tuple
-from abc import ABCMeta, abstractmethod
+import torchvision.transforms.v2 as v2
 from pathlib import Path
-from tqdm import tqdm
+from torchvision.models.segmentation import fcn_resnet50, FCN_ResNet50_Weights
 
-from dlvc.wandb_logger import WandBLogger
+
+from dlvc.models.segment_model import DeepSegmenter
 from dlvc.dataset.oxfordpets import OxfordPetsCustom
+from dlvc.metrics import SegMetrics
+from dlvc.trainer import ImgSemSegTrainer
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import ExponentialLR
 
-class BaseTrainer(metaclass=ABCMeta):
-    '''
-    Base class of all Trainers.
-    '''
+def train(args):
+    dataset_path = "./data"
 
-    @abstractmethod
-    def train(self) -> None:
-        '''
-        Returns the number of samples in the dataset.
-        '''
-
-        pass
-
-    @abstractmethod
-    def _val_epoch(self) -> Tuple[float, float]:
-        '''
-        Returns the number of samples in the dataset.
-        '''
-
-        pass
-
-    @abstractmethod
-    def _train_epoch(self) -> Tuple[float, float]:
-        '''
-        Returns the number of samples in the dataset.
-        '''
-
-        pass
-
-class ImgSemSegTrainer(BaseTrainer):
-    """
-    Class that stores the logic for training a model for image classification.
-    """
-    def __init__(self, 
-                 model, 
-                 optimizer,
-                 loss_fn,
-                 lr_scheduler,
-                 train_metric,
-                 val_metric,
-                 train_data,
-                 val_data,
-                 device,
-                 num_epochs: int, 
-                 training_save_dir: Path,
-                 batch_size: int = 4,
-                 val_frequency: int = 5):
-        self.model = model
-        self.optimizer = optimizer
-        self.loss_fn = loss_fn
-        self.lr_scheduler = lr_scheduler
-
-        self.device = device
-
-        self.num_epochs = num_epochs
-        self.train_metric = train_metric
-
-        self.val_frequency = val_frequency
-        self.val_metric = val_metric
-
-        self.subtract_one = isinstance(train_data, OxfordPetsCustom)
-        
-        self.train_data_loader = torch.utils.data.DataLoader(train_data,
-                                          batch_size=batch_size,
-                                          shuffle=True,
-                                          num_workers=4)
+    train_transform = v2.Compose([
+        v2.ToImage(), 
+        v2.Resize(size=(128, 128)),  # Resize images to a fixed size
+        v2.ToDtype(torch.float32, scale=True),
+        v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    train_transform2 = v2.Compose([
+        v2.ToImage(), 
+        v2.Resize(size=(128, 128)),  # Resize masks to a fixed size
+        v2.ToDtype(torch.long, scale=False)
+    ])
     
-        self.val_data_loader = torch.utils.data.DataLoader(val_data,
-                                          batch_size=batch_size,
-                                          shuffle=False,
-                                          num_workers=4)
-        self.num_train_data = len(train_data)
-        self.num_val_data = len(val_data)
+    val_transform = v2.Compose([
+        v2.ToImage(), 
+        v2.Resize(size=(128, 128)),  # Resize images to a fixed size
+        v2.ToDtype(torch.float32, scale=True),
+        v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    val_transform2 = v2.Compose([
+        v2.ToImage(), 
+        v2.Resize(size=(128, 128)),  # Resize masks to a fixed size
+        v2.ToDtype(torch.long, scale=False)
+    ])
 
-        self.checkpoint_dir = training_save_dir
-        self.wandb_logger = WandBLogger(enabled=True, model=self.model, run_name=model.net._get_name())
-        
-    def _train_epoch(self, epoch_idx: int) -> Tuple[float, float]:
-        self.model.train()
-        epoch_loss = 0.
-        self.train_metric.reset()
-        
-        # train epoch
-        for i, batch in tqdm(enumerate(self.train_data_loader), desc="train", total=len(self.train_data_loader)):
-            self.optimizer.zero_grad()
+    train_data = OxfordPetsCustom(root=dataset_path, 
+                            split="trainval",
+                            target_types='segmentation', 
+                            transform=train_transform,
+                            target_transform=train_transform2,
+                            download=True)
 
-            inputs, labels = batch
-            labels = labels.squeeze(1) - 1
+    val_data = OxfordPetsCustom(root=dataset_path, 
+                            split="test",
+                            target_types='segmentation', 
+                            transform=val_transform,
+                            target_transform=val_transform2,
+                            download=True)
 
-            batch_size = inputs.shape[0]
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")  # GPU if available, otherwise use CPU
 
-            outputs = self.model(inputs.to(self.device))
-            if isinstance(outputs, collections.OrderedDict):
-                outputs = outputs['out']
+    if args.pretrained:
+        model = fcn_resnet50(weights_backbone=FCN_ResNet50_Weights.DEFAULT)  # FCN ResNet50 model with pre-trained weights (backbone)
+    else:
+        model = fcn_resnet50(weights_backbone=None)  # Empty model training from scratch
 
-            loss = self.loss_fn(outputs, labels.to(self.device))
-            loss.backward()
+    model.classifier[4] = torch.nn.Conv2d(512, len(train_data.classes_seg), kernel_size=(1, 1))
+    model = DeepSegmenter(model)
+    model = model.to(device)
+    
+    # Initialize the AdamW optimizer with AMSGrad, CrossEntropyLoss and learning rate
+    optimizer = AdamW(model.parameters(), lr=0.01, amsgrad=True)
+    loss_fn = torch.nn.CrossEntropyLoss()
+    lr_scheduler = ExponentialLR(optimizer, gamma=0.98)
+    
+    # Initialize segmentation metrics for training and validation data
+    train_metric = SegMetrics(classes=train_data.classes_seg)
+    val_metric = SegMetrics(classes=val_data.classes_seg)
+    val_frequency = 1
 
-            self.optimizer.step()
+    model_save_dir = Path("saved_models")
+    model_save_dir.mkdir(exist_ok=True)
 
-            epoch_loss += (loss.item() * batch_size)
-            self.train_metric.update(outputs.detach().cpu(), labels.detach().cpu())
+    trainer = ImgSemSegTrainer(model,
+                    optimizer,
+                    loss_fn,
+                    lr_scheduler,
+                    train_metric,
+                    val_metric,
+                    train_data,
+                    val_data,
+                    device,
+                    args.num_epochs, 
+                    model_save_dir,
+                    batch_size=32,
+                    val_frequency=val_frequency)
+    trainer.train()  # Start the training process
 
-        self.lr_scheduler.step()
-        epoch_loss /= self.num_train_data
-        epoch_mIoU = self.train_metric.mIoU()
+    # see Reference implementation of ImgSemSegTrainer
+    # just comment if not used
+    trainer.dispose()  # Release any resources held by the trainer
 
-        print(f"______epoch {epoch_idx} \n")
-        print(f"Loss: {epoch_loss}")
-        print(self.train_metric)
+if __name__ == "__main__":
+    args = argparse.ArgumentParser(description='Training')
+    args.add_argument('--pretrained', action='store_true', help='Pre-trained weights for the backbone')
+    
+    if not isinstance(args, tuple):
+        args = args.parse_args()
+    args.num_epochs = 30
 
-        return epoch_loss, epoch_mIoU
-
-    def _val_epoch(self, epoch_idx: int) -> Tuple[float, float]:
-        self.val_metric.reset()
-        epoch_loss = 0.
-        for batch_idx, batch in tqdm(enumerate(self.val_data_loader), desc="eval", total=len(self.val_data_loader)):
-            self.model.eval()
-            with torch.no_grad():
-                inputs, labels = batch
-                labels = labels.squeeze(1) - 1
-                batch_size = inputs.shape[0]
-
-                outputs = self.model(inputs.to(self.device))
-                if isinstance(outputs, collections.OrderedDict):
-                    outputs = outputs['out']
-
-                loss = self.loss_fn(outputs, labels.to(self.device))
-                epoch_loss += (loss.item() * batch_size)
-                self.val_metric.update(outputs.cpu(), labels.cpu())
-
-        epoch_loss /= self.num_val_data
-        epoch_mIoU = self.val_metric.mIoU()
-        
-        if epoch_mIoU is None:
-            epoch_mIoU = 0.0  # Ensure epoch_mIoU is not None
-        
-        print(f"______epoch {epoch_idx} - validation \n")
-        print(f"Loss: {epoch_loss}")
-        print(self.val_metric)
-
-        return epoch_loss, epoch_mIoU
-
-    def train(self) -> None:
-        best_mIoU = 0.
-        for epoch_idx in range(self.num_epochs):
-            train_loss, train_mIoU = self._train_epoch(epoch_idx)
-
-            wandb_log = {'epoch': epoch_idx}
-
-            wandb_log.update({"train/loss": train_loss})
-            wandb_log.update({"train/mIoU": train_mIoU})
-
-            if epoch_idx % self.val_frequency == 0:
-                val_loss, val_mIoU = self._val_epoch(epoch_idx)
-                wandb_log.update({"val/loss": val_loss})
-                wandb_log.update({"val/mIoU": val_mIoU})
-
-                if val_mIoU is None:
-                    val_mIoU = 0.0  # Ensure val_mIoU is not None
-
-                if best_mIoU <= val_mIoU:
-                    print(f"####best mIoU: {val_mIoU}")
-                    print(f"####saving model to {self.checkpoint_dir}")
-                    self.model.save(Path(self.checkpoint_dir), suffix="best")
-                    best_mIoU = val_mIoU
-                if epoch_idx == self.num_epochs - 1:
-                    self.model.save(Path(self.checkpoint_dir), suffix="last")
-
-            self.wandb_logger.log(wandb_log)
-
-    def dispose(self) -> None:
-        self.wandb_logger.finish()
+    train(args)
