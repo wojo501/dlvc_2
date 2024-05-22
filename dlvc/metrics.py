@@ -12,7 +12,6 @@ class PerformanceMeasure(metaclass=ABCMeta):
         '''
         Resets internal state.
         '''
-
         pass
 
     @abstractmethod
@@ -21,7 +20,6 @@ class PerformanceMeasure(metaclass=ABCMeta):
         Update the measure by comparing predicted data with ground-truth target data.
         Raises ValueError if the data shape or values are unsupported.
         '''
-
         pass
 
     @abstractmethod
@@ -29,32 +27,26 @@ class PerformanceMeasure(metaclass=ABCMeta):
         '''
         Return a string representation of the performance.
         '''
-
         pass
-
 
 class SegMetrics(PerformanceMeasure):
     '''
     Mean Intersection over Union.
     '''
-    __slots__ = ["confusion_matrix","classes","miou"]
+    __slots__ = ["confusion_matrix", "classes", "miou"]
 
     def __init__(self, classes):
         self.classes = classes
-
         self.reset()
 
     def reset(self) -> None:
         '''
         Resets the internal state.
         '''
-        ## TODO implement
-        self.confusion_matrix = torch.zeros(len(self.classes), len(self.classes))
+        self.confusion_matrix = torch.zeros(len(self.classes), len(self.classes), dtype=torch.int64)
         self.miou = 0
 
-
-    def update(self, prediction: torch.Tensor, 
-               target: torch.Tensor) -> None:
+    def update(self, prediction: torch.Tensor, target: torch.Tensor) -> None:
         '''
         Update the measure by comparing predicted data with ground-truth target data.
         prediction must have shape (b,c,h,w) where b=batchsize, c=num_classes, h=height, w=width.
@@ -62,36 +54,30 @@ class SegMetrics(PerformanceMeasure):
         Raises ValueError if the data shape or values are unsupported.
         Make sure to not include pixels of value 255 in the calculation since those are to be ignored. 
         '''
-
-        ##TODO implement
         if prediction.shape[0] != target.shape[0] or prediction.shape[2] != target.shape[1] or prediction.shape[3] != target.shape[2]:
             raise ValueError("Batch size of prediction and target must match")
         if prediction.shape[1] != len(self.classes):
             raise ValueError("Number of classes in prediction and target must match")
         
         pred_labels = torch.argmax(prediction, dim=1)
-        
-        for i in range(pred_labels.shape[0]):
-            for j in range(pred_labels.shape[1]):
-                for k in range(pred_labels.shape[2]):
-                    if target[i,j,k] == 255:
-                        continue
-                    if pred_labels[i,j,k] == target[i,j,k]: # True positive or True negative
-                        self.confusion_matrix[target[i,j,k], target[i,j,k]] += 1
-                    else: # False positive or False negative
-                        self.confusion_matrix[target[i,j,k], pred_labels[i,j,k]] += 1
-        
-        self.mIoU()
+
+        pred_labels = pred_labels.view(-1)
+        target = target.view(-1)
+
+        mask = target != 255
+        pred_labels = pred_labels[mask]
+        target = target[mask]
+
+        for t, p in zip(target, pred_labels):
+            self.confusion_matrix[t, p] += 1
 
     def __str__(self):
         '''
         Return a string representation of the performance, mean IoU.
         e.g. "mIou: 0.54"
         '''
-        ##TODO implement
-        return f"mIoU: {self.miou}\n"
+        return f"mIoU: {self.miou:.4f}\n"
 
-    
     def mIoU(self) -> float:
         '''
         Compute and return the mean IoU as a float between 0 and 1.
@@ -99,21 +85,21 @@ class SegMetrics(PerformanceMeasure):
         If the denominator for IoU calculation for one of the classes is 0,
         use 0 as IoU for this class.
         '''
-        ##TODO implement
         num_classes = len(self.classes)
         ious = np.zeros(num_classes)
         col_sums = torch.sum(self.confusion_matrix, dim=0)
         row_sums = torch.sum(self.confusion_matrix, dim=1)
     
         for i in range(num_classes):
-            denominator = col_sums[i] + row_sums[i] - self.confusion_matrix[i,i]
+            denominator = col_sums[i] + row_sums[i] - self.confusion_matrix[i, i]
             if denominator == 0:
                 ious[i] = 0
             else:
-                ious[i] = self.confusion_matrix[i,i] / denominator
+                ious[i] = self.confusion_matrix[i, i].item() / denominator.item()
 
-        ious_clear = ious[ious != 0]
-        self.miou = np.mean(ious_clear)
+        self.miou = np.mean(ious[ious != 0])
+        return self.miou
+
 
 # TESTS
 # # params
