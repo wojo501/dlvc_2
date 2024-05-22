@@ -1,4 +1,5 @@
 data/
 env_dlvc_2
 dlvc/wandb_logger.py
-path_to_dataset/
+path_to_dataset
+wandb
