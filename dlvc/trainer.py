@@ -95,7 +95,10 @@ class ImgSemSegTrainer(BaseTrainer):
             self.optimizer.zero_grad()
 
             inputs, labels = batch
-            labels = labels.squeeze(1) - 1
+            
+            labels = labels.squeeze(1) #error might be here
+            if self.subtract_one: 
+                labels = labels - 1
 
             batch_size = inputs.shape[0]
 
@@ -128,7 +131,9 @@ class ImgSemSegTrainer(BaseTrainer):
             self.model.eval()
             with torch.no_grad():
                 inputs, labels = batch
-                labels = labels.squeeze(1) - 1
+                labels = labels.squeeze(1) #error might be here
+                if self.subtract_one:
+                    labels = labels - 1
                 batch_size = inputs.shape[0]
 
                 outputs = self.model(inputs.to(self.device))

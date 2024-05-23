@@ -82,7 +82,8 @@ def train(args):
         # e.g. load pretrained weights with: state_dict = torch.load("path to model", map_location='cpu')
         # read first model in the directory
         state_dict = torch.load(os.path.join(path_models, os.listdir(path_models)[0]), map_location='cpu')
-        encoder_state_dict = {k: v for k, v in state_dict.items() if k.startswith('encoder')}
+        encoder_state_dict = {k.replace("encoder.", ""): v for k, v in state_dict.items() if k.startswith('encoder')}
+        print("ENCODER KEYS: ", encoder_state_dict.keys())
         model.net.encoder.load_state_dict(encoder_state_dict)
 
         # Option to freeze the encoder and only train the decoder
@@ -93,7 +94,7 @@ def train(args):
     model.to(device)
     # init optimizer, loss_fn, lr_scheduler
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.001)
-    loss_fn = nn.CrossEntropyLoss(ignore_index=254) # class 255 has index 254 in Cityscapes datset
+    loss_fn = nn.CrossEntropyLoss(ignore_index=255) # class 255 has index 254 in Cityscapes datset
     lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.98)
     
     train_metric = SegMetrics(classes=train_data.classes_seg)
