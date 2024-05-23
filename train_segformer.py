@@ -16,6 +16,12 @@ from dlvc.trainer import ImgSemSegTrainer
 
 
 def train(args):
+    dataset_oxford_path = "./data"
+    dataset_city_path = "./data/cityscapes_assg2"
+    if args.dataset == "city":
+        num_calsses = 19
+    else:
+        num_calsses = 3
 
     train_transform = v2.Compose([v2.ToImage(), 
                             v2.ToDtype(torch.float32, scale=True),
@@ -35,27 +41,27 @@ def train(args):
                             v2.Resize(size=(64,64), interpolation=v2.InterpolationMode.NEAREST)])
 
     if args.dataset == "oxford":
-        train_data = OxfordPetsCustom(root="path_to_dataset", 
+        train_data = OxfordPetsCustom(root=dataset_oxford_path, 
                                 split="trainval",
                                 target_types='segmentation', 
                                 transform=train_transform,
                                 target_transform=train_transform2,
                                 download=True)
 
-        val_data = OxfordPetsCustom(root="path_to_dataset", 
+        val_data = OxfordPetsCustom(root=dataset_oxford_path, 
                                 split="test",
                                 target_types='segmentation', 
                                 transform=val_transform,
                                 target_transform=val_transform2,
                                 download=True)
     if args.dataset == "city":
-        train_data = CityscapesCustom(root="path_to_dataset", 
+        train_data = CityscapesCustom(root=dataset_city_path, 
                                 split="train",
                                 mode="fine",
                                 target_type='semantic', 
                                 transform=train_transform,
                                 target_transform=train_transform2)
-        val_data = CityscapesCustom(root="/data/databases/cityscapes", 
+        val_data = CityscapesCustom(root=dataset_city_path, 
                                 split="val",
                                 mode="fine",
                                 target_type='semantic', 
@@ -66,7 +72,8 @@ def train(args):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")  # GPU if available, otherwise use CPU
 
     # not sure if model initialization is correct
-    segformer_model = SegFormer(num_classes=3)
+
+    segformer_model = SegFormer(num_classes=num_calsses)
     model = DeepSegmenter(net=segformer_model)
     # If you are in the fine-tuning phase:
     path_models = Path("./saved_models")
@@ -86,7 +93,7 @@ def train(args):
     model.to(device)
     # init optimizer, loss_fn, lr_scheduler
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.001)
-    loss_fn = nn.CrossEntropyLoss(ignore_index=255) # remember to ignore label value 255 when training with the Cityscapes datset
+    loss_fn = nn.CrossEntropyLoss(ignore_index=254) # class 255 has index 254 in Cityscapes datset
     lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.98)
     
     train_metric = SegMetrics(classes=train_data.classes_seg)
