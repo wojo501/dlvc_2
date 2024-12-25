@@ -1,4 +1,4 @@
-# Deep Learning for Visual Computing - Assignment Report 2
+# Deep Learning for Visual Computing - Assignment 2
 - [Wojciech Michaluk](https://github.com/wojo501)
 - [Mariusz Nitecki](https://github.com/n1tecki)
 
