@@ -1,9 +1,6 @@
 # Deep Learning for Visual Computing - Assignment Report 2
-
-**Course Code**: 183.663  
-**Group 36**:  
-- Wojtek Michaluk (12341799)  
-- Mariusz Nitecki (11711554)
+- [Wojciech Michaluk](https://github.com/wojo501)
+- [Mariusz Nitecki](https://github.com/n1tecki)
 
 ---
 
@@ -65,7 +62,7 @@ Fine-tuned using the OxfordIIITPet dataset:
 ![Training Loss (SegFormer)](./plots/seg_former/train_loss.png)
 ![Training mIoU (SegFormer)](./plots/seg_former/train_mIoU.png)
 ![Validation Loss (SegFormer)](./plots/seg_former/val_loss.png)
-![Validation mIoU (SegFormer)](./plots/seg_former/val_miou.png)
+![Validation mIoU (SegFormer)](./plots/seg_former/val_mIoU.png)
 
 ---
 
